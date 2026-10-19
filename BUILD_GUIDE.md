@@ -128,6 +128,22 @@ is FAT32, and that the card is pushed all the way in.
 Audio is 16 kHz mono, which is ideal for speech recognition: about
 **115 MB per hour**, so an 8 GB card holds over 60 hours.
 
+### No SD card yet? Record to the ESP32's memory and download over Wi-Fi
+
+`firmware/02b_flash_recorder` uses the same mic, button and LEDs, but no SD
+card. It holds about **5 minutes** of audio, which is enough for testing.
+
+1. In the sketch, replace `your-wifi-name` and `your-wifi-password` with your
+   Wi-Fi details. Only 2.4 GHz networks work; most home routers offer one.
+2. Set **Tools → Partition Scheme → 16M Flash (3MB APP/9.9MB FATFS)**, then upload.
+3. The Serial Monitor (115200) prints an address like `http://192.168.1.42`.
+   Open it in a browser on a laptop or phone on the same Wi-Fi.
+4. Record with the button, stop, then refresh the page and click the file to
+   download it.
+
+When buying a card, get **16 or 32 GB**. Windows can't format larger cards as
+FAT32 without extra tools.
+
 ---
 
 ## What comes next (to be written once phase 2 works)

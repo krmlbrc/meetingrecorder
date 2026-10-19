@@ -22,8 +22,8 @@ electronics simple and the battery small.
 | Phase | Goal | Status |
 |-------|------|--------|
 | 0 | Install Arduino IDE, make the ESP32-S3 blink an LED | |
-| 1 | Microphone test: see your voice as a wave on screen | `firmware/01_mic_test` |
-| 2 | Press the button to record a WAV file to the SD card | `firmware/02_sd_recorder` |
+| 1 | Microphone test: see your voice as a wave on screen | ✅ done (`firmware/01_mic_test`) |
+| 2 | Press the button to record a WAV file to the SD card | `firmware/02_sd_recorder` (no card yet: `firmware/02b_flash_recorder`) |
 | 3 | Laptop script: WAV → transcript → summary | to do |
 | 4 | Real clock (DS3231) for file names, e-paper status screen | to do |
 | 5 | Battery + charger + on/off switch | to do |
