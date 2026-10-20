@@ -200,7 +200,7 @@ void setup() {
   pinMode(PIN_LED_IDLE, OUTPUT);
 
   SPI.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
-  if (!SD.begin(PIN_SD_CS, SPI, 8000000)) {
+  if (!SD.begin(PIN_SD_CS, SPI, 4000000)) {  // 4 MHz: reliable over jumper wires
     Serial.println("SD card failed - check wiring and that the card is FAT32");
     blinkForever(PIN_LED_REC);  // fast red blink = SD problem
   }
