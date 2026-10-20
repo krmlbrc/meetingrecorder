@@ -97,7 +97,7 @@ Format the microSD card as **FAT32** on your laptop first.
 
 | SD module pin | ESP32-S3 pin |
 |---------------|--------------|
-| VCC | **5V** (the module has its own regulator; this works while USB is plugged in) |
+| 3V3 | **3V3** (leave the module's 5V/VCC pin empty) |
 | GND | GND |
 | CS   | GPIO 10 |
 | MOSI | GPIO 11 |
