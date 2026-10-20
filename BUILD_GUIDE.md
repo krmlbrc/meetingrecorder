@@ -181,3 +181,21 @@ FAT32 without extra tools.
 | 14–18, 21 | e-Paper (phase 4) |
 | 42 | Blue LED |
 | 35, 36, 37 | **Never use.** Taken by the PSRAM on N16R8 boards |
+
+## Troubleshooting: SD card reads garbage or writes fail (YD-ESP32-S3 boards)
+
+On the YD-ESP32-S3 board, the **5V pin does not output USB power** unless
+the small **IN-OUT** solder jumper is bridged (green circle below; the 5V pin
+is the yellow circle). The full-size SD module is designed to run from 5V
+through its own regulator, and on 3V3 it can misbehave: listing works but
+writes fail, or the card reports "no valid FAT volume" even when the format
+is correct.
+
+![IN-OUT jumper location](docs/in-out-jumper.png)
+
+Fix: unplug the USB and join the two IN-OUT pads with a small blob of
+solder. Then wire SD module **5V → ESP32 5V**, leave the module's 3V3 pin
+empty, and connect both of its GND pins to GND.
+
+**After bridging, the 5V pin is wired straight to USB power. Never feed
+another power source (such as a battery) into the 5V pin while USB is plugged in.**
