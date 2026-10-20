@@ -12,18 +12,18 @@ doesn't work, you won't know which part is at fault.
 | INMP441 I2S microphone module | Digital microphone, good quality for speech |
 | SD card module ("Arduino SD Kart Modülü") | Saves recordings. **You need a microSD card (8–32 GB) if you don't have one** |
 | DS3231 RTC module (Raspberry Pi type) | Keeps the date and time so files get real names |
-| Waveshare 2.13" e-Paper (250×122) | Low-power status screen (phase 4) |
-| TP4056 Type-C LiPo charger module(s) | Charges the battery (phase 5) |
-| LiPo battery 3.7 V | Power (phase 5) |
+| Waveshare 2.13" e-Paper (250×122) | Low-power status screen (phase 6) |
+| TP4056 Type-C LiPo charger module(s) | Charges the battery (phase 7) |
+| LiPo battery 3.7 V | Power (phase 7) |
 | Push buttons (red 16 mm, metal, 6 mm tactile) | Start/stop recording |
-| On/off slide switch | Main power switch (phase 5) |
+| On/off slide switch | Main power switch (phase 7) |
 | 5 mm LEDs (red, blue, white) + 330 Ω resistors | Recording / status lights |
 | Breadboard, female-female jumper wires, pin headers | Prototyping without soldering |
-| Perfboard | Final soldered version (phase 6) |
+| Perfboard | Final soldered version (phase 8) |
 
 Two things worth checking:
 - **Battery charger:** there seem to be two small blue charger/power boards.
-  Before phase 5, send a close-up photo of both (front and back) so the battery
+  Before phase 7, send a close-up photo of both (front and back) so the battery
   wiring can be confirmed. Mistakes with LiPo batteries can cause fires, so
   don't guess this part.
 - **USB cable:** you need a USB-C **data** cable. Some cables only charge,
@@ -156,18 +156,96 @@ FAT32 without extra tools.
 
 ---
 
-## What comes next (to be written once phase 2 works)
+## What comes next
 
-- **Phase 3:** a Python script on your laptop. Drop a WAV in a folder and get
-  a transcript (Whisper, runs free on your laptop) and a summary with action
-  items (Claude API).
-- **Phase 4:** DS3231 clock (I2C: SDA → GPIO 8, SCL → GPIO 9) so files are
-  named like `2026-10-20_1430.WAV`, and the e-paper screen showing
-  "● REC 00:12:34" and battery level.
-- **Phase 5:** battery, charger and power switch. Send photos of the charger
-  boards first.
-- **Phase 6:** the device uploads recordings over Wi-Fi automatically. Then
-  move everything from jumper wires to the perfboard and into a case.
+Each phase below gets full step-by-step instructions once the one before it
+works. This is the plan so you can see where the project is going.
+
+### Phase 3: Laptop script, WAV → notes in a Google Doc
+
+No new wiring. Download a WAV from the recorder, drop it in a folder, and a
+Python script on your laptop does the rest:
+
+1. **Transcribe** with Whisper (free, runs on your laptop; Turkish and
+   English both work well).
+2. **Who spoke when** with pyannote: the transcript gets labels like
+   `Speaker 1`, `Speaker 2`. This works from the sound of the voices, so the
+   language doesn't matter. Everyone should sit within about 1–2 m of the mic.
+3. **Summarize** with Claude: summary, key points, decisions, action items
+   (who, what, by when) and open questions. Claude also guesses names from the
+   conversation ("Thanks Mehmet, go ahead" → Speaker 2 is probably Mehmet).
+4. **Write a Google Doc** for the meeting in a "Meetings" folder in your
+   Google Drive, with the notes at the top, talk time per person, and the
+   full transcript with speaker names at the bottom. Open it with the Google
+   Docs app on your phone.
+
+What you'll need (all free to sign up):
+- **Python 3.10+** on the laptop.
+- An **Anthropic API key** (console.anthropic.com). Pay per use.
+- A **Hugging Face** account and token, to download the pyannote model.
+- A **Google Cloud** project with the Google Docs and Drive APIs switched on,
+  so the script can create Docs in your Drive.
+
+**Test:** record a 5-minute conversation with a friend, run the script, and
+check that the Doc shows two different speakers and sensible action items.
+
+### Phase 4: Recognize regular participants by voice
+
+Builds on phase 3, still no new wiring.
+
+- Each regular participant records about 30 seconds of speech once. The
+  script saves a **voiceprint** (a list of numbers describing their voice).
+- In each meeting, unknown speakers are compared with the saved voiceprints,
+  so `Speaker 2` becomes `Ahmet` automatically.
+- **Rename once, recognized forever:** when a new voice shows up as
+  `Speaker 3`, you name it once and its voiceprint is saved for next time.
+
+**Consent:** voiceprints are biometric data. Under KVKK they are *özel
+nitelikli kişisel veri*, so each person must explicitly agree before you save
+theirs. Keep them on your laptop only. Always tell people when a meeting is
+being recorded, with or without voiceprints.
+
+**Test:** enroll two people, record a new conversation, and check that the
+Doc uses their real names.
+
+### Phase 5: Live mode
+
+Now the notes appear *during* the meeting.
+
+- **Device:** the recorder streams its audio over Wi-Fi to the laptop while
+  it records, and **still writes the WAV to the SD card**. If the Wi-Fi
+  drops, nothing is lost.
+- **Laptop:** transcribes as the audio arrives and, every ~2 minutes, asks
+  Claude to update the notes. The Google Doc refreshes on your phone by itself.
+  Speaker names may shift in the first few minutes while it learns the voices.
+- **Bookmark button:** a long press on the record button marks the moment, and
+  the notes get a ⭐ "flagged at 14:32" item. Uses the same button, no new pin.
+- **When you stop:** a final pass over the complete recording replaces the
+  live draft with clean notes and stable speaker names.
+
+**Test:** run a 10-minute meeting and watch the Doc update on your phone.
+
+### Phase 6: Clock and status screen
+
+DS3231 clock (I2C: SDA → GPIO 8, SCL → GPIO 9) so files are named like
+`2026-10-20_1430.WAV`, and the e-paper screen showing "● REC 00:12:34",
+"Live ✓" or "Offline, saving to SD", and the battery level.
+
+### Phase 7: Battery, charger and power switch
+
+Send photos of the charger boards first. Streaming over Wi-Fi uses much more
+power than recording alone, so the battery size depends on whether you use
+live mode.
+
+### Phase 8: Works anywhere, then the final build
+
+- **Phone hotspot:** meeting-room Wi-Fi often blocks devices or needs a login,
+  and the ESP32 only uses 2.4 GHz. The recorder can join your phone's hotspot
+  instead, and the laptop joins the same hotspot.
+- **Optional, later:** move the laptop's work to the internet so the laptop
+  isn't needed at all. This is the only step that could cost money (a small
+  server or a paid transcription service), and you don't need it.
+- Move everything from jumper wires to the perfboard and into a case.
 
 ### Pins reserved so far (don't reuse these)
 
@@ -176,9 +254,9 @@ FAT32 without extra tools.
 | 1 | Button |
 | 2 | Red LED |
 | 4, 5, 6 | Microphone |
-| 8, 9 | DS3231 clock (phase 4) |
+| 8, 9 | DS3231 clock (phase 6) |
 | 10–13 | SD card |
-| 14–18, 21 | e-Paper (phase 4) |
+| 14–18, 21 | e-Paper (phase 6) |
 | 42 | Blue LED |
 | 35, 36, 37 | **Never use.** Taken by the PSRAM on N16R8 boards |
 
