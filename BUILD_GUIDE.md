@@ -115,12 +115,22 @@ Format the microSD card as **FAT32** on your laptop first.
 To connect a female jumper to the breadboard, break off a single pin from the
 pin header strip and use it as a plug.
 
+### Check the card first
+Pins 10–13 are the ESP32-S3's default SD pins, so Arduino's built-in test
+works without changes: **File → Examples → SD → SD_Test**. Upload it, open
+the Serial Monitor (115200) and press RST. It shows the card type and size and
+lists the files already on the card. It also leaves a few small test files
+behind; they do no harm.
+
 ### Test
-1. Upload `firmware/02_sd_recorder/02_sd_recorder.ino`.
-2. Open the Serial Monitor (115200). Blue LED on means it's ready.
+1. In `firmware/02_sd_recorder/02_sd_recorder.ino`, put in your Wi-Fi name and
+   password (2.4 GHz only), then upload.
+2. Open the Serial Monitor (115200). Blue LED on means it's ready. Note the
+   `http://...` address it prints.
 3. Press the button: the red LED comes on and it's recording. Talk for a minute.
 4. Press again to stop. The file is saved as `REC_0001.WAV`, `REC_0002.WAV`...
-5. Put the SD card in your laptop and play the file. You should hear yourself.
+5. Open the address in a browser on the same Wi-Fi and click the file to
+   download it. No card reader needed. The page can also delete all files.
 
 If the Serial Monitor says "SD card failed", check the 6 wires, that the card
 is FAT32, and that the card is pushed all the way in.

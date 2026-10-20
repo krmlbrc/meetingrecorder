@@ -1,10 +1,19 @@
 // Phase 2: press the button to start/stop recording a WAV file to the SD card.
 // Blue LED = ready, red LED = recording. Files: REC_0001.WAV, REC_0002.WAV, ...
+// Recordings can be downloaded over Wi-Fi from a web page, so no card reader is needed.
+//
+// Before uploading, put your Wi-Fi name and password below (2.4 GHz networks only).
 // Requires the "esp32 by Espressif Systems" board package, version 3.x.
 
 #include <ESP_I2S.h>
 #include <SPI.h>
 #include <SD.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <vector>
+
+const char *WIFI_NAME     = "your-wifi-name";
+const char *WIFI_PASSWORD = "your-wifi-password";
 
 const int PIN_BUTTON   = 1;
 const int PIN_LED_REC  = 2;   // red
@@ -24,6 +33,7 @@ const int CHUNK = 512;          // samples per read/write
 const int GAIN_SHIFT = 14;      // lower = louder (13 is twice as loud as 14)
 
 I2SClass i2s;
+WebServer server(80);
 File wavFile;
 bool recording = false;
 uint32_t dataBytes = 0;
@@ -108,6 +118,79 @@ void blinkForever(int pin) {
   }
 }
 
+// Files in the top folder of the card (sub-folders are left alone).
+std::vector<String> listFiles() {
+  std::vector<String> paths;
+  File root = SD.open("/");
+  for (File f = root.openNextFile(); f; f = root.openNextFile()) {
+    if (!f.isDirectory()) paths.push_back(String(f.path()));
+  }
+  return paths;
+}
+
+void handleRoot() {
+  uint64_t freeMB = (SD.totalBytes() - SD.usedBytes()) / (1024 * 1024);
+  String html = "<html><head><meta name='viewport' content='width=device-width'>"
+                "<title>Meeting Recorder</title></head>"
+                "<body style='font-family:sans-serif;max-width:600px;margin:20px auto'>"
+                "<h2>Meeting Recorder</h2>";
+  html += recording ? "<p><b style='color:red'>&#9679; Recording...</b> "
+                      "Stop recording to download files.</p>"
+                    : "<p>Ready.</p>";
+  html += "<p>Free space: " + String((uint32_t)freeMB) + " MB (about " +
+          String((uint32_t)(freeMB * 1024 * 1024 / (SAMPLE_RATE * 2) / 3600)) + " hours)</p><ul>";
+  for (const String &path : listFiles()) {
+    File f = SD.open(path, "r");
+    html += "<li><a href='/download?f=" + path + "'>" + path.substring(1) + "</a> (" +
+            String((uint32_t)(f.size() / 1024)) + " KB)</li>";
+    f.close();
+  }
+  html += "</ul><p><a href='/deleteall' onclick=\"return confirm('Delete all files on the card?')\">"
+          "Delete all files</a></p></body></html>";
+  server.send(200, "text/html", html);
+}
+
+void handleDownload() {
+  String path = server.arg("f");
+  if (recording) {
+    server.send(409, "text/plain", "Stop recording first.");
+    return;
+  }
+  if (!path.startsWith("/") || !SD.exists(path)) {
+    server.send(404, "text/plain", "File not found.");
+    return;
+  }
+  File f = SD.open(path, "r");
+  String type = path.endsWith(".WAV") || path.endsWith(".wav") ? "audio/wav" : "application/octet-stream";
+  server.sendHeader("Content-Disposition", "attachment; filename=\"" + path.substring(1) + "\"");
+  server.streamFile(f, type);
+  f.close();
+}
+
+void handleDeleteAll() {
+  if (!recording) {
+    for (const String &path : listFiles()) SD.remove(path);
+  }
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+void connectWifi() {
+  Serial.printf("Connecting to Wi-Fi \"%s\"", WIFI_NAME);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_NAME, WIFI_PASSWORD);
+  for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Wi-Fi connected. Open this in your browser: http://" + WiFi.localIP().toString());
+  } else {
+    Serial.println("Wi-Fi failed - check name/password (2.4 GHz only). Recording still works.");
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -121,6 +204,7 @@ void setup() {
     Serial.println("SD card failed - check wiring and that the card is FAT32");
     blinkForever(PIN_LED_REC);  // fast red blink = SD problem
   }
+  Serial.printf("SD card OK: %u MB\n", (uint32_t)(SD.cardSize() / (1024 * 1024)));
 
   i2s.setPins(PIN_MIC_SCK, PIN_MIC_WS, -1, PIN_MIC_SD);
   if (!i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_32BIT,
@@ -129,11 +213,19 @@ void setup() {
     blinkForever(PIN_LED_IDLE);  // fast blue blink = mic problem
   }
 
+  connectWifi();
+  server.on("/", handleRoot);
+  server.on("/download", handleDownload);
+  server.on("/deleteall", handleDeleteAll);
+  server.begin();
+
   digitalWrite(PIN_LED_IDLE, HIGH);
   Serial.println("Ready. Press the button to record.");
 }
 
 void loop() {
+  server.handleClient();
+
   if (buttonPressed()) {
     if (recording) stopRecording();
     else startRecording();
