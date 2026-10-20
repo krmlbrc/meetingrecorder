@@ -154,13 +154,90 @@ card. It holds about **5 minutes** of audio, which is enough for testing.
 When buying a card, get **16 or 32 GB**. Windows can't format larger cards as
 FAT32 without extra tools.
 
+Downloads over Wi-Fi are slow (roughly 15–30 minutes per hour of audio) because
+the card runs at 1 MHz. If you're in a hurry, take the card out and copy the
+files with a card reader.
+
 ---
 
-## What comes next (to be written once phase 2 works)
+## Phase 3: Laptop script: recording → transcript → meeting notes
 
-- **Phase 3:** a Python script on your laptop. Drop a WAV in a folder and get
-  a transcript (Whisper, runs free on your laptop) and a summary with action
-  items (Claude API).
+`laptop/meeting_notes.py` turns each recording into two files:
+
+- `REC_0001.txt`: the transcript with timestamps. **Whisper** makes it on your
+  laptop. It's free and the audio never leaves your computer.
+- `REC_0001.md`: meeting notes with a summary, decisions, action items and open
+  questions, written by **Claude**, with the transcript underneath. Only
+  the transcript text is sent to Claude, never the audio.
+
+### One-time setup
+
+1. Install **Python 3.10 or newer** from python.org. On Windows, tick
+   **"Add python.exe to PATH"** in the installer.
+2. Open a terminal (Windows: *PowerShell*) in the `laptop` folder of this
+   project and install the two libraries:
+   ```
+   pip install -r requirements.txt
+   ```
+3. Get a Claude API key at **console.anthropic.com** (*API Keys → Create
+   Key*) and add some credit. An hour-long meeting costs a few cents.
+   Then store the key so the script can find it:
+   - Windows (PowerShell): `setx ANTHROPIC_API_KEY "sk-ant-..."`, then **close
+     and reopen** PowerShell.
+   - macOS / Linux: add `export ANTHROPIC_API_KEY="sk-ant-..."` to `~/.zshrc`
+     or `~/.bashrc`, then open a new terminal.
+
+   Treat the key like a password: don't paste it into code or share it.
+
+### Use it
+
+With the recorder switched on and on the same Wi-Fi (use the address its Serial
+Monitor printed):
+
+```
+python meeting_notes.py --device 192.168.1.42
+```
+
+This downloads the recordings you don't have yet into `laptop/recordings/`,
+transcribes them and writes the notes. Run it again whenever you like: files
+that already have notes are skipped. Files you copied with a card reader
+work too:
+
+```
+python meeting_notes.py D:\REC_0003.WAV
+```
+
+The first run downloads the Whisper model (about 500 MB for `small`), so it
+takes longer.
+
+### Options
+
+| Option | What it does |
+|--------|--------------|
+| `--language tr` | Set the language instead of letting Whisper guess (`en`, `tr`, `de`...). Helps with short recordings |
+| `--model medium` | More accurate, especially for languages other than English, but about 2–3× slower. `tiny`/`base` are faster and rougher |
+| `--no-summary` | Only make transcripts, no Claude (no API key needed) |
+
+Transcribing takes time: with `small`, an hour of audio needs roughly 10–30
+minutes, depending on the laptop.
+
+### Test
+
+1. Record a 2-minute fake meeting. Say a decision out loud ("we'll meet again
+   on Friday") and an action item ("Alex will order the battery by Monday").
+2. Run the script and open the `.md` file. The decision and the action item
+   should be listed.
+
+If Whisper gets lots of words wrong, try `--model medium` and the right
+`--language` first. If that doesn't help, the recording itself is the problem:
+listen to the WAV. If it's quiet, lower `GAIN_SHIFT` in the recorder sketch
+(13 is twice as loud as 14). If it's distorted, raise it. Speak within about
+2 m of the mic.
+
+---
+
+## What comes next
+
 - **Phase 4:** DS3231 clock (I2C: SDA → GPIO 8, SCL → GPIO 9) so files are
   named like `2026-10-20_1430.WAV`, and the e-paper screen showing
   "● REC 00:12:34" and battery level.

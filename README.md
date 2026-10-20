@@ -23,8 +23,8 @@ electronics simple and the battery small.
 |-------|------|--------|
 | 0 | Install Arduino IDE, make the ESP32-S3 blink an LED | |
 | 1 | Microphone test: see your voice as a wave on screen | ✅ done (`firmware/01_mic_test`) |
-| 2 | Press the button to record a WAV file to the SD card | `firmware/02_sd_recorder` (no card yet: `firmware/02b_flash_recorder`) |
-| 3 | Laptop script: WAV → transcript → summary | to do |
+| 2 | Press the button to record a WAV file to the SD card | ✅ done (`firmware/02_sd_recorder`) |
+| 3 | Laptop script: WAV → transcript → summary | `laptop/meeting_notes.py`, testing |
 | 4 | Real clock (DS3231) for file names, e-paper status screen | to do |
 | 5 | Battery + charger + on/off switch | to do |
 | 6 | Wi-Fi upload, then solder onto perfboard and put it in a case | to do |
