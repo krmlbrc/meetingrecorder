@@ -182,20 +182,25 @@ FAT32 without extra tools.
 | 42 | Blue LED |
 | 35, 36, 37 | **Never use.** Taken by the PSRAM on N16R8 boards |
 
-## Troubleshooting: SD card reads garbage or writes fail (YD-ESP32-S3 boards)
+## Troubleshooting: SD card problems
 
-On the YD-ESP32-S3 board, the **5V pin does not output USB power** unless
-the small **IN-OUT** solder jumper is bridged (green circle below; the 5V pin
-is the yellow circle). The full-size SD module is designed to run from 5V
-through its own regulator, and on 3V3 it can misbehave: listing works but
-writes fail, or the card reports "no valid FAT volume" even when the format
-is correct.
+Work through these in order, changing one thing at a time:
 
-![IN-OUT jumper location](docs/in-out-jumper.png)
+1. **Power-cycle:** unplug the USB for 5 seconds. A card can hang after an
+   upload or a card swap, and pressing RST does not cut its power.
+2. **Slow down:** use 1 MHz (`SD.begin(SS, SPI, 1000000)`) over jumper wires.
+3. **Try another card or adapter:** a microSD card in a cheap SD adapter can
+   fail even when the card itself works fine in a laptop.
+4. **Swap the CS, MOSI, SCK and MISO jumper wires:** a bad crimp is invisible.
+5. **Last resort, 5V power (YD-ESP32-S3 boards):** the 5V pin does not output
+   USB power unless the small **IN-OUT** solder jumper is bridged (green
+   circle below; the 5V pin is the yellow circle). Bridge it, wire SD module
+   **5V → ESP32 5V**, and leave the module's 3V3 pin empty.
 
-Fix: unplug the USB and join the two IN-OUT pads with a small blob of
-solder. Then wire SD module **5V → ESP32 5V**, leave the module's 3V3 pin
-empty, and connect both of its GND pins to GND.
+   ![IN-OUT jumper location](docs/in-out-jumper.png)
 
-**After bridging, the 5V pin is wired straight to USB power. Never feed
-another power source (such as a battery) into the 5V pin while USB is plugged in.**
+   **Once bridged, the 5V pin is wired straight to USB power. Never feed
+   another power source (such as a battery) into it while USB is plugged in.**
+
+The setup that is known to work: SD module **3V3 → ESP32 3V3**, 5V pin empty,
+1 MHz, with a full-size SD card.
