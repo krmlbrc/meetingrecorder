@@ -129,6 +129,10 @@ behind; they do no harm.
    `http://...` address it prints.
 3. Press the button: the red LED comes on and it's recording. Talk for a minute.
 4. Press again to stop. The file is saved as `REC_0001.WAV`, `REC_0002.WAV`...
+   The Serial Monitor shows a status line every 10 s while recording, and a
+   summary when you stop, for example
+   `Stopped. 62.3 seconds saved out of 62.4 seconds recorded.` The two numbers
+   should match to within a second.
 5. Open the address in a browser on the same Wi-Fi and click the file to
    download it. No card reader needed. The page can also delete all files.
 
@@ -282,3 +286,17 @@ Work through these in order, changing one thing at a time:
 
 The setup that is known to work: SD module **3V3 → ESP32 3V3**, 5V pin empty,
 1 MHz, with a full-size SD card.
+
+### Recordings are shorter than the time you recorded
+
+Look at the summary in the Serial Monitor after you stop:
+
+- **"SD write errors" above 0:** the card stopped answering for a moment. The
+  recorder reopens the file and carries on, losing at most a few seconds each
+  time. Frequent errors point to a wiring or card problem: work through the
+  list above, starting with another card.
+- **"lost to a full buffer" above 0:** the card was too slow for too long.
+  Check that *Tools → PSRAM* is set to **OPI PSRAM** (the Serial Monitor says
+  "No PSRAM" otherwise), then try another card.
+- **For more detail,** set *Tools → Core Debug Level → Warn* and upload again.
+  The SD library then prints why a write failed, such as `Wait Failed`.

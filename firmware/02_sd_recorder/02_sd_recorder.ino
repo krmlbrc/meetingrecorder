@@ -3,13 +3,18 @@
 // Recordings can be downloaded over Wi-Fi from a web page, so no card reader is needed.
 //
 // Before uploading, put your Wi-Fi name and password below (2.4 GHz networks only).
-// Requires the "esp32 by Espressif Systems" board package, version 3.x.
+// Requires the "esp32 by Espressif Systems" board package, version 3.x, and
+// Tools -> PSRAM -> "OPI PSRAM" (used as a large audio buffer).
+//
+// While recording, the Serial Monitor (115200) prints a status line every 10 s
+// and a summary when you stop. If a recording comes out short, send those lines.
 
 #include <ESP_I2S.h>
 #include <SPI.h>
 #include <SD.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <freertos/stream_buffer.h>
 #include <vector>
 
 const char *WIFI_NAME     = "your-wifi-name";
@@ -29,21 +34,35 @@ const int PIN_SD_SCK  = 12;
 const int PIN_SD_MISO = 13;
 
 const int SAMPLE_RATE = 16000;  // 16 kHz mono is what speech recognition expects
-const int CHUNK = 512;          // samples per read/write
+const int CHUNK = 512;          // samples per microphone read
 const int GAIN_SHIFT = 14;      // lower = louder (13 is twice as loud as 14)
+const uint32_t SD_SPEED = 1000000;  // 1 MHz: proven reliable over jumper wires
+
+// SD cards pause now and then while they write, sometimes for half a second or
+// more. The microphone runs in its own task and fills this buffer, so those
+// pauses don't lose audio. 2 MB of PSRAM holds about a minute.
+const size_t AUDIO_BUF_PSRAM    = 2 * 1024 * 1024;
+const size_t AUDIO_BUF_NO_PSRAM = 64 * 1024;  // about 2 s, if PSRAM is off
+const size_t SD_WRITE_SIZE      = 4096;       // write to the card in 4 KB pieces
 
 I2SClass i2s;
 WebServer server(80);
 File wavFile;
-bool recording = false;
-uint32_t dataBytes = 0;
+String recName;
+volatile bool recording = false;
+
+StreamBufferHandle_t audioBuf;
+StaticStreamBuffer_t audioBufState;
+size_t audioBufSize;
+uint8_t sdChunk[SD_WRITE_SIZE];
+
+uint32_t dataBytes = 0;   // audio bytes in the file
+uint32_t recStartMs = 0;
 uint32_t lastFlushMs = 0;
-
-int32_t raw[CHUNK];
-int16_t pcm[CHUNK];
-
-// Simple high-pass filter state, removes the mic's DC offset.
-float hpPrevIn = 0, hpPrevOut = 0;
+uint32_t lastReportMs = 0;
+uint32_t slowestWriteMs = 0;
+int writeErrors = 0;
+volatile uint32_t droppedBytes = 0;  // audio lost because the buffer was full
 
 void writeWavHeader(File &f, uint32_t dataLen) {
   uint32_t byteRate = SAMPLE_RATE * 2;
@@ -72,30 +91,136 @@ String nextFileName() {
   return String("/REC_LAST.WAV");
 }
 
+// Runs on its own: reads the microphone, filters it and queues it for the SD card.
+void micTask(void *) {
+  static int32_t raw[CHUNK];
+  static int16_t pcm[CHUNK];
+  float hpPrevIn = 0, hpPrevOut = 0;  // simple high-pass filter, removes the mic's DC offset
+  bool wasRecording = false;
+
+  while (true) {
+    size_t bytesRead = i2s.readBytes((char *)raw, sizeof(raw));
+    int count = bytesRead / sizeof(int32_t);
+    if (count == 0) {
+      vTaskDelay(1);
+      continue;
+    }
+    if (!recording) {
+      wasRecording = false;
+      continue;
+    }
+    if (!wasRecording) {
+      hpPrevIn = hpPrevOut = 0;
+      wasRecording = true;
+    }
+
+    for (int i = 0; i < count; i++) {
+      float x = (float)(raw[i] >> GAIN_SHIFT);
+      float y = x - hpPrevIn + 0.995f * hpPrevOut;
+      hpPrevIn = x;
+      hpPrevOut = y;
+      if (y > 32767) y = 32767;
+      if (y < -32768) y = -32768;
+      pcm[i] = (int16_t)y;
+    }
+
+    size_t bytes = count * sizeof(int16_t);
+    droppedBytes += bytes - xStreamBufferSend(audioBuf, pcm, bytes, 0);
+  }
+}
+
+void noteWriteTime(uint32_t startMs) {
+  uint32_t took = millis() - startMs;
+  if (took > slowestWriteMs) slowestWriteMs = took;
+}
+
+// Opens the recording again after a write error and continues after the last
+// audio that was safely saved (at most a few seconds before the error).
+bool reopenFile() {
+  wavFile.close();
+  wavFile = SD.open(recName, "r+");
+  if (!wavFile) {
+    // The card itself may need a restart.
+    SD.end();
+    SPI.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+    if (SD.begin(PIN_SD_CS, SPI, SD_SPEED)) wavFile = SD.open(recName, "r+");
+  }
+  if (!wavFile) return false;
+
+  uint32_t size = wavFile.size();
+  if (size < 44) {
+    writeWavHeader(wavFile, 0);
+    size = 44;
+  }
+  dataBytes = (size - 44) & ~1u;  // whole 16-bit samples only
+  wavFile.seek(44 + dataBytes);
+  return true;
+}
+
+// Writes the first len bytes of sdChunk to the file. After one failed write the
+// SD library refuses every later write to the same file, which used to cut
+// recordings short without any sign, so reopen the file and try again.
+bool writeToCard(size_t len) {
+  for (int attempt = 0; attempt < 3; attempt++) {
+    uint32_t startMs = millis();
+    size_t written = wavFile.write(sdChunk, len);
+    noteWriteTime(startMs);
+    if (written == len) {
+      dataBytes += len;
+      return true;
+    }
+    writeErrors++;
+    Serial.printf("SD write error after %u s of recording, reopening the file\n",
+                  (unsigned)((millis() - recStartMs) / 1000));
+    if (!reopenFile()) break;
+  }
+  Serial.println("The SD card stopped responding, recording stopped. "
+                 "See \"Troubleshooting: SD card problems\" in BUILD_GUIDE.md.");
+  return false;
+}
+
 void startRecording() {
-  String name = nextFileName();
-  wavFile = SD.open(name, FILE_WRITE);
+  recName = nextFileName();
+  wavFile = SD.open(recName, FILE_WRITE);
   if (!wavFile) {
     Serial.println("Could not create file on SD card");
     return;
   }
   writeWavHeader(wavFile, 0);  // placeholder, fixed when we stop
+
+  // Throw away anything left over from the last recording.
+  while (xStreamBufferReceive(audioBuf, sdChunk, SD_WRITE_SIZE, 0) > 0) {}
   dataBytes = 0;
-  hpPrevIn = hpPrevOut = 0;
-  lastFlushMs = millis();
+  writeErrors = 0;
+  slowestWriteMs = 0;
+  droppedBytes = 0;
+  recStartMs = lastFlushMs = lastReportMs = millis();
   recording = true;
   digitalWrite(PIN_LED_REC, HIGH);
   digitalWrite(PIN_LED_IDLE, LOW);
-  Serial.println("Recording to " + name);
+  Serial.println("Recording to " + recName);
 }
 
-void stopRecording() {
+void stopRecording(bool cardOk) {
   recording = false;
+  float recordedS = (millis() - recStartMs) / 1000.0;
+  // Save the audio that is still waiting in the buffer.
+  size_t len;
+  while (cardOk && (len = xStreamBufferReceive(audioBuf, sdChunk, SD_WRITE_SIZE, 0)) > 0) {
+    cardOk = writeToCard(len);
+  }
   writeWavHeader(wavFile, dataBytes);
   wavFile.close();
   digitalWrite(PIN_LED_REC, LOW);
   digitalWrite(PIN_LED_IDLE, HIGH);
-  Serial.printf("Stopped. %.1f seconds saved.\n", dataBytes / 2.0 / SAMPLE_RATE);
+
+  float savedS = dataBytes / 2.0 / SAMPLE_RATE;
+  Serial.printf("Stopped. %.1f seconds saved out of %.1f seconds recorded.\n", savedS, recordedS);
+  Serial.printf("SD write errors: %d, slowest SD write: %u ms, lost to a full buffer: %.1f s\n",
+                writeErrors, (unsigned)slowestWriteMs, droppedBytes / 2.0 / SAMPLE_RATE);
+  if (savedS < recordedS - 1) {
+    Serial.println("Some audio is missing. Copy these lines and send them for help.");
+  }
 }
 
 bool buttonPressed() {
@@ -200,11 +325,20 @@ void setup() {
   pinMode(PIN_LED_IDLE, OUTPUT);
 
   SPI.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
-  if (!SD.begin(PIN_SD_CS, SPI, 1000000)) {  // 1 MHz: proven reliable over jumper wires
+  if (!SD.begin(PIN_SD_CS, SPI, SD_SPEED)) {
     Serial.println("SD card failed - check wiring and that the card is FAT32");
     blinkForever(PIN_LED_REC);  // fast red blink = SD problem
   }
   Serial.printf("SD card OK: %u MB\n", (uint32_t)(SD.cardSize() / (1024 * 1024)));
+
+  audioBufSize = AUDIO_BUF_PSRAM;
+  uint8_t *storage = (uint8_t *)ps_malloc(audioBufSize + 1);
+  if (!storage) {
+    Serial.println("No PSRAM - set Tools -> PSRAM -> OPI PSRAM. Using a small audio buffer.");
+    audioBufSize = AUDIO_BUF_NO_PSRAM;
+    storage = (uint8_t *)malloc(audioBufSize + 1);
+  }
+  audioBuf = xStreamBufferCreateStatic(audioBufSize, 1, storage, &audioBufState);
 
   i2s.setPins(PIN_MIC_SCK, PIN_MIC_WS, -1, PIN_MIC_SD);
   if (!i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_32BIT,
@@ -212,6 +346,8 @@ void setup() {
     Serial.println("Microphone (I2S) failed to start");
     blinkForever(PIN_LED_IDLE);  // fast blue blink = mic problem
   }
+  // Higher priority than loop(), so the mic is read even while the card is busy.
+  xTaskCreate(micTask, "mic", 4096, NULL, 5, NULL);
 
   connectWifi();
   server.on("/", handleRoot);
@@ -227,31 +363,36 @@ void loop() {
   server.handleClient();
 
   if (buttonPressed()) {
-    if (recording) stopRecording();
+    if (recording) stopRecording(true);
     else startRecording();
   }
 
-  // Always read the mic so the buffer stays fresh, even when not recording.
-  size_t bytesRead = i2s.readBytes((char *)raw, sizeof(raw));
-  int count = bytesRead / sizeof(int32_t);
-  if (!recording || count == 0) return;
+  if (!recording) return;
 
-  for (int i = 0; i < count; i++) {
-    float x = (float)(raw[i] >> GAIN_SHIFT);
-    float y = x - hpPrevIn + 0.995f * hpPrevOut;
-    hpPrevIn = x;
-    hpPrevOut = y;
-    if (y > 32767) y = 32767;
-    if (y < -32768) y = -32768;
-    pcm[i] = (int16_t)y;
+  // The mic task fills the buffer; move it to the card in 4 KB pieces.
+  if (xStreamBufferBytesAvailable(audioBuf) >= SD_WRITE_SIZE) {
+    size_t len = xStreamBufferReceive(audioBuf, sdChunk, SD_WRITE_SIZE, 0);
+    if (!writeToCard(len)) {
+      stopRecording(false);
+      return;
+    }
+  } else {
+    delay(1);
   }
-
-  size_t written = wavFile.write((uint8_t *)pcm, count * sizeof(int16_t));
-  dataBytes += written;
 
   // Save to the card every 5 s so a power cut loses at most a few seconds.
   if (millis() - lastFlushMs > 5000) {
+    uint32_t startMs = millis();
     wavFile.flush();
+    noteWriteTime(startMs);
     lastFlushMs = millis();
+  }
+
+  if (millis() - lastReportMs >= 10000) {
+    lastReportMs += 10000;
+    Serial.printf("REC %u s: %.1f s saved, buffer %u%% full, slowest SD write %u ms, errors %d\n",
+                  (unsigned)((millis() - recStartMs) / 1000), dataBytes / 2.0 / SAMPLE_RATE,
+                  (unsigned)(xStreamBufferBytesAvailable(audioBuf) * 100 / audioBufSize),
+                  (unsigned)slowestWriteMs, writeErrors);
   }
 }
